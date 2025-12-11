@@ -1,12 +1,13 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Photo } from '../types';
+import { Photo, ExifData } from '../types';
 import { formatBytes, formatDate } from '../utils';
 import { analyzeImage } from '../services/geminiService';
 
 interface DetailsPaneProps {
   selectedPhotos: Photo[];
   onUpdatePhoto: (id: string, data: Partial<Photo>) => void;
+  onRenamePhoto?: (id: string, newName: string) => void;
 }
 
 interface ExportSettings {
@@ -14,7 +15,18 @@ interface ExportSettings {
   quality: number;
 }
 
-const DetailsPane: React.FC<DetailsPaneProps> = ({ selectedPhotos, onUpdatePhoto }) => {
+interface ExifFormState {
+  dateTaken: string;
+  make: string;
+  model: string;
+  lensModel: string;
+  fNumber: string;
+  exposureTime: string;
+  iso: string;
+  focalLength: string;
+}
+
+const DetailsPane: React.FC<DetailsPaneProps> = ({ selectedPhotos, onUpdatePhoto, onRenamePhoto }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   
   // Export State
@@ -23,15 +35,137 @@ const DetailsPane: React.FC<DetailsPaneProps> = ({ selectedPhotos, onUpdatePhoto
   const [previewData, setPreviewData] = useState<{ url: string, size: number, blob: Blob } | null>(null);
   const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
   
+  // Rename State
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [tempName, setTempName] = useState('');
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  // EXIF Edit State
+  const [isEditingExif, setIsEditingExif] = useState(false);
+  const [exifForm, setExifForm] = useState<ExifFormState>({
+    dateTaken: '',
+    make: '',
+    model: '',
+    lensModel: '',
+    fNumber: '',
+    exposureTime: '',
+    iso: '',
+    focalLength: ''
+  });
+
   const isMulti = selectedPhotos.length > 1;
   const photo = selectedPhotos[0];
 
-  // Reset export mode when selection changes
+  // Helper to format date for datetime-local input
+  const toDateTimeLocal = (timestamp?: number) => {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+
+  // Reset states when selection changes
   useEffect(() => {
     setIsExportMode(false);
     setPreviewData(null);
     setExportSettings({ format: 'image/jpeg', quality: 0.9 });
+    setIsEditingName(false);
+    setIsEditingExif(false);
+
+    if (photo) {
+        setExifForm({
+            dateTaken: toDateTimeLocal(photo.dateTaken || photo.lastModified),
+            make: photo.exif?.make || '',
+            model: photo.exif?.model || '',
+            lensModel: photo.exif?.lensModel || '',
+            fNumber: photo.exif?.fNumber || '',
+            exposureTime: photo.exif?.exposureTime || '',
+            iso: photo.exif?.iso || '',
+            focalLength: photo.exif?.focalLength || ''
+        });
+    }
   }, [photo?.id]);
+
+  // Handle entering edit mode for Rename
+  useEffect(() => {
+      if (isEditingName && nameInputRef.current) {
+          nameInputRef.current.focus();
+          const lastDot = tempName.lastIndexOf('.');
+          if (lastDot > 0) {
+              nameInputRef.current.setSelectionRange(0, lastDot);
+          } else {
+              nameInputRef.current.select();
+          }
+      }
+  }, [isEditingName]);
+
+  const startEditingName = () => {
+      if (isMulti) return;
+      setTempName(photo.name);
+      setIsEditingName(true);
+  };
+
+  const handleRenameSubmit = () => {
+      if (!tempName.trim() || tempName === photo.name) {
+          setIsEditingName(false);
+          return;
+      }
+      if (onRenamePhoto) {
+          onRenamePhoto(photo.id, tempName.trim());
+      }
+      setIsEditingName(false);
+  };
+
+  const handleNameKeyDown = (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter') {
+          handleRenameSubmit();
+      } else if (e.key === 'Escape') {
+          setIsEditingName(false);
+          setTempName(photo.name);
+      }
+  };
+
+  // EXIF Save Logic
+  const handleSaveExif = () => {
+      if (!photo) return;
+      
+      const dateTimestamp = new Date(exifForm.dateTaken).getTime();
+      
+      const updatedExif: ExifData = {
+          ...photo.exif,
+          make: exifForm.make,
+          model: exifForm.model,
+          lensModel: exifForm.lensModel,
+          fNumber: exifForm.fNumber,
+          exposureTime: exifForm.exposureTime,
+          iso: exifForm.iso,
+          focalLength: exifForm.focalLength
+      };
+
+      onUpdatePhoto(photo.id, {
+          dateTaken: isNaN(dateTimestamp) ? photo.dateTaken : dateTimestamp,
+          exif: updatedExif
+      });
+      
+      setIsEditingExif(false);
+  };
+
+  const handleCancelExif = () => {
+      setIsEditingExif(false);
+      // Reset form to current photo data
+      if (photo) {
+          setExifForm({
+              dateTaken: toDateTimeLocal(photo.dateTaken || photo.lastModified),
+              make: photo.exif?.make || '',
+              model: photo.exif?.model || '',
+              lensModel: photo.exif?.lensModel || '',
+              fNumber: photo.exif?.fNumber || '',
+              exposureTime: photo.exif?.exposureTime || '',
+              iso: photo.exif?.iso || '',
+              focalLength: photo.exif?.focalLength || ''
+          });
+      }
+  };
 
   // Clean up preview URL
   useEffect(() => {
@@ -55,12 +189,11 @@ const DetailsPane: React.FC<DetailsPaneProps> = ({ selectedPhotos, onUpdatePhoto
             });
 
             const canvas = document.createElement('canvas');
-            canvas.width = img.width; // Use original dimensions
+            canvas.width = img.width; 
             canvas.height = img.height;
             const ctx = canvas.getContext('2d');
             
             if (ctx) {
-                // Fill white background for JPEGs (handling transparency)
                 if (exportSettings.format === 'image/jpeg') {
                     ctx.fillStyle = '#FFFFFF';
                     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -84,7 +217,7 @@ const DetailsPane: React.FC<DetailsPaneProps> = ({ selectedPhotos, onUpdatePhoto
           }
       };
 
-      const timer = setTimeout(generate, 300); // Debounce 300ms
+      const timer = setTimeout(generate, 300);
       return () => clearTimeout(timer);
   }, [exportSettings, isExportMode, photo]);
 
@@ -94,7 +227,6 @@ const DetailsPane: React.FC<DetailsPaneProps> = ({ selectedPhotos, onUpdatePhoto
       const link = document.createElement('a');
       link.href = previewData.url;
       
-      // Determine extension
       let ext = 'jpg';
       if (exportSettings.format === 'image/png') ext = 'png';
       else if (exportSettings.format === 'image/webp') ext = 'webp';
@@ -107,7 +239,7 @@ const DetailsPane: React.FC<DetailsPaneProps> = ({ selectedPhotos, onUpdatePhoto
   };
 
   const handleAnalyze = async () => {
-    if (isMulti) return; // Simple version: single file only
+    if (isMulti) return; 
     setIsAnalyzing(true);
     try {
       const result = await analyzeImage(photo.file);
@@ -131,6 +263,20 @@ const DetailsPane: React.FC<DetailsPaneProps> = ({ selectedPhotos, onUpdatePhoto
       </div>
     );
   }
+
+  // --- Render Helpers for Exif Inputs ---
+  const InputRow = ({ label, value, onChange, placeholder }: { label: string, value: string, onChange: (val: string) => void, placeholder?: string }) => (
+    <div className="flex flex-col gap-1 mb-2">
+        <label className="text-[10px] uppercase text-gray-400 font-bold">{label}</label>
+        <input 
+            type="text" 
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={placeholder}
+            className="w-full text-xs px-2 py-1.5 border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
+        />
+    </div>
+  );
 
   return (
     <div className="w-80 bg-white/90 backdrop-blur-xl border-l border-gray-200 h-full overflow-y-auto flex flex-col">
@@ -165,7 +311,28 @@ const DetailsPane: React.FC<DetailsPaneProps> = ({ selectedPhotos, onUpdatePhoto
                     )}
                 </div>
                 
-                <h3 className="font-semibold text-gray-800 text-center break-all px-2">{photo.name}</h3>
+                {/* Editable Name Field */}
+                <div className="w-full px-2 mb-1">
+                    {isEditingName ? (
+                        <input
+                            ref={nameInputRef}
+                            type="text"
+                            value={tempName}
+                            onChange={(e) => setTempName(e.target.value)}
+                            onBlur={handleRenameSubmit}
+                            onKeyDown={handleNameKeyDown}
+                            className="w-full text-center font-semibold text-gray-800 bg-white border border-blue-500 rounded px-1 py-0.5 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                        />
+                    ) : (
+                        <h3 
+                            onClick={startEditingName}
+                            className="font-semibold text-gray-800 text-center break-all cursor-text hover:bg-gray-100 rounded px-1 py-0.5 border border-transparent transition-colors"
+                            title="Click to rename"
+                        >
+                            {photo.name}
+                        </h3>
+                    )}
+                </div>
                 
                 {/* Size Comparison */}
                 <div className="flex items-center gap-2 mt-1">
@@ -250,47 +417,93 @@ const DetailsPane: React.FC<DetailsPaneProps> = ({ selectedPhotos, onUpdatePhoto
 
                 {/* File Info & EXIF */}
                 <div>
-                    <label className="text-xs font-semibold text-gray-400 uppercase">File Info</label>
-                    <div className="mt-2 space-y-2 text-sm">
-                        {photo.dimensions && (
-                            <div className="flex justify-between">
-                                <span className="text-gray-500">Dimensions</span>
-                                <span className="text-gray-800 font-medium">{photo.dimensions.width} x {photo.dimensions.height}</span>
+                    <div className="flex items-center justify-between mb-2">
+                         <label className="text-xs font-semibold text-gray-400 uppercase">File Info</label>
+                         {!isEditingExif ? (
+                            <button 
+                                onClick={() => setIsEditingExif(true)}
+                                className="text-xs font-medium text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-2 py-0.5 rounded transition-colors"
+                            >
+                                Edit
+                            </button>
+                         ) : (
+                             <div className="flex gap-2">
+                                 <button onClick={handleCancelExif} className="text-xs font-medium text-gray-500 hover:text-gray-700">Cancel</button>
+                                 <button onClick={handleSaveExif} className="text-xs font-bold text-blue-600 hover:text-blue-700">Save</button>
+                             </div>
+                         )}
+                    </div>
+                    
+                    {!isEditingExif ? (
+                        <div className="mt-2 space-y-2 text-sm animate-fadeIn">
+                            {photo.dimensions && (
+                                <div className="flex justify-between">
+                                    <span className="text-gray-500">Dimensions</span>
+                                    <span className="text-gray-800 font-medium">{photo.dimensions.width} x {photo.dimensions.height}</span>
+                                </div>
+                            )}
+                            <div className="flex justify-between items-start">
+                                <span className="text-gray-500">Date Taken</span>
+                                <span className="text-gray-800 font-medium text-right w-32 truncate">
+                                    {photo.dateTaken ? formatDate(photo.dateTaken) : '--'}
+                                </span>
                             </div>
-                        )}
-                        <div className="flex justify-between items-start">
-                            <span className="text-gray-500">Date Taken</span>
-                            <span className="text-gray-800 font-medium text-right w-32 truncate">
-                                {photo.dateTaken ? formatDate(photo.dateTaken) : '--'}
-                            </span>
-                        </div>
-                        
-                        {/* Extended EXIF Data */}
-                        {photo.exif && (photo.exif.make || photo.exif.model || photo.exif.fNumber) && (
-                            <div className="pt-2 mt-2 border-t border-dashed border-gray-100 space-y-1">
-                                {photo.exif.model && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500">Camera</span>
-                                        <span className="text-gray-800 font-medium truncate ml-2" title={photo.exif.model}>{photo.exif.make} {photo.exif.model}</span>
-                                    </div>
-                                )}
-                                {photo.exif.lensModel && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500">Lens</span>
-                                        <span className="text-gray-800 font-medium truncate ml-2" title={photo.exif.lensModel}>{photo.exif.lensModel}</span>
-                                    </div>
-                                )}
-                                <div className="flex justify-between text-xs text-gray-600 font-mono pt-1">
-                                    <span>{photo.exif.focalLength ? `${photo.exif.focalLength}` : ''}</span>
-                                    <div className="flex gap-2">
-                                        <span>{photo.exif.fNumber ? `${photo.exif.fNumber}` : ''}</span>
-                                        <span>{photo.exif.exposureTime ? `${photo.exif.exposureTime}s` : ''}</span>
-                                        <span>{photo.exif.iso ? `ISO ${photo.exif.iso}` : ''}</span>
+                            
+                            {/* Extended EXIF Data Display */}
+                            {(photo.exif?.make || photo.exif?.model || photo.exif?.fNumber || photo.exif?.lensModel) && (
+                                <div className="pt-2 mt-2 border-t border-dashed border-gray-100 space-y-1">
+                                    {(photo.exif.make || photo.exif.model) && (
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-500">Camera</span>
+                                            <span className="text-gray-800 font-medium truncate ml-2" title={`${photo.exif.make || ''} ${photo.exif.model || ''}`}>
+                                                {photo.exif.make} {photo.exif.model}
+                                            </span>
+                                        </div>
+                                    )}
+                                    {photo.exif.lensModel && (
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-500">Lens</span>
+                                            <span className="text-gray-800 font-medium truncate ml-2" title={photo.exif.lensModel}>{photo.exif.lensModel}</span>
+                                        </div>
+                                    )}
+                                    <div className="flex justify-between text-xs text-gray-600 font-mono pt-1">
+                                        <span>{photo.exif.focalLength ? `${photo.exif.focalLength}` : ''}</span>
+                                        <div className="flex gap-2">
+                                            <span>{photo.exif.fNumber ? `${photo.exif.fNumber}` : ''}</span>
+                                            <span>{photo.exif.exposureTime ? `${photo.exif.exposureTime}s` : ''}</span>
+                                            <span>{photo.exif.iso ? `ISO ${photo.exif.iso}` : ''}</span>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        )}
-                    </div>
+                            )}
+                        </div>
+                    ) : (
+                        // Edit Mode Form
+                        <div className="mt-2 p-3 bg-gray-50 rounded-lg border border-gray-200 space-y-2 animate-fadeIn">
+                             <div className="flex flex-col gap-1 mb-2">
+                                <label className="text-[10px] uppercase text-gray-400 font-bold">Date Taken</label>
+                                <input 
+                                    type="datetime-local" 
+                                    value={exifForm.dateTaken}
+                                    onChange={(e) => setExifForm({...exifForm, dateTaken: e.target.value})}
+                                    className="w-full text-xs px-2 py-1.5 border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 outline-none"
+                                />
+                             </div>
+                             
+                             <InputRow label="Camera Make" value={exifForm.make} onChange={(v) => setExifForm({...exifForm, make: v})} placeholder="e.g. Sony" />
+                             <InputRow label="Camera Model" value={exifForm.model} onChange={(v) => setExifForm({...exifForm, model: v})} placeholder="e.g. A7IV" />
+                             <InputRow label="Lens" value={exifForm.lensModel} onChange={(v) => setExifForm({...exifForm, lensModel: v})} placeholder="e.g. 24-70mm" />
+                             
+                             <div className="grid grid-cols-2 gap-2">
+                                <InputRow label="Aperture" value={exifForm.fNumber} onChange={(v) => setExifForm({...exifForm, fNumber: v})} placeholder="f/2.8" />
+                                <InputRow label="Shutter" value={exifForm.exposureTime} onChange={(v) => setExifForm({...exifForm, exposureTime: v})} placeholder="1/60" />
+                             </div>
+                             <div className="grid grid-cols-2 gap-2">
+                                <InputRow label="ISO" value={exifForm.iso} onChange={(v) => setExifForm({...exifForm, iso: v})} placeholder="100" />
+                                <InputRow label="Focal Len" value={exifForm.focalLength} onChange={(v) => setExifForm({...exifForm, focalLength: v})} placeholder="50mm" />
+                             </div>
+                        </div>
+                    )}
                 </div>
 
                 <div className="pt-4 border-t border-gray-100">

@@ -212,8 +212,10 @@ const App: React.FC = () => {
             }
           },
           { 
-            label: `Rename ${isMulti ? `${count} Items...` : '...'}`, 
+            label: isMulti ? `Rename ${count} Items...` : 'Rename...', 
             icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>,
+            // If single item, we might want to focus details pane, but standard behavior for context menu rename is a modal or inline.
+            // For now, we keep using the modal for consistency via context menu, but Details Pane offers inline.
             onClick: () => setIsRenameModalOpen(true)
           },
           { separator: true },
@@ -518,6 +520,55 @@ const App: React.FC = () => {
     }
   }, [sortedPhotos, selectedIds]);
 
+  // SINGLE RENAME LOGIC
+  const handleRenamePhoto = async (id: string, newName: string) => {
+      const photo = photos.find(p => p.id === id);
+      if (!photo) return;
+      if (photo.name === newName) return; // No change
+
+      // Check permissions
+      if (directoryHandle) {
+          const hasPermission = await verifyPermission(directoryHandle, true);
+          if (!hasPermission) {
+              showToast("Permission denied. Cannot rename file.", "error");
+              return;
+          }
+      }
+
+      let newFile: File | undefined;
+      
+      if (photo.fileHandle) {
+          try {
+              // @ts-ignore
+              if (typeof photo.fileHandle.move === 'function') {
+                  // @ts-ignore
+                  await photo.fileHandle.move(newName);
+                  newFile = await photo.fileHandle.getFile();
+              } else {
+                  showToast("Rename not supported in this browser.", "error");
+                  return;
+              }
+          } catch (error) {
+              console.error("Single rename failed:", error);
+              showToast("Failed to rename file on disk.", "error");
+              return;
+          }
+      }
+
+      // Update State
+      setPhotos(prev => prev.map(p => {
+          if (p.id === id) {
+              return {
+                  ...p,
+                  name: newName,
+                  file: newFile || p.file,
+                  url: newFile ? URL.createObjectURL(newFile) : p.url
+              };
+          }
+          return p;
+      }));
+      showToast(`Renamed to "${newName}"`, 'success');
+  };
 
   // Batch Rename Logic
   const handleBatchRename = async (options: RenameOptions) => {
@@ -702,6 +753,7 @@ const App: React.FC = () => {
              <DetailsPane 
                selectedPhotos={selectedPhotosList} 
                onUpdatePhoto={handleUpdatePhoto}
+               onRenamePhoto={handleRenamePhoto}
              />
           </div>
         </main>
