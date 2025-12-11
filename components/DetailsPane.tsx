@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Photo } from '../types';
 import { formatBytes, formatDate } from '../utils';
@@ -247,6 +248,7 @@ const DetailsPane: React.FC<DetailsPaneProps> = ({ selectedPhotos, onUpdatePhoto
                     )}
                 </div>
 
+                {/* File Info & EXIF */}
                 <div>
                     <label className="text-xs font-semibold text-gray-400 uppercase">File Info</label>
                     <div className="mt-2 space-y-2 text-sm">
@@ -262,6 +264,32 @@ const DetailsPane: React.FC<DetailsPaneProps> = ({ selectedPhotos, onUpdatePhoto
                                 {photo.dateTaken ? formatDate(photo.dateTaken) : '--'}
                             </span>
                         </div>
+                        
+                        {/* Extended EXIF Data */}
+                        {photo.exif && (photo.exif.make || photo.exif.model || photo.exif.fNumber) && (
+                            <div className="pt-2 mt-2 border-t border-dashed border-gray-100 space-y-1">
+                                {photo.exif.model && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">Camera</span>
+                                        <span className="text-gray-800 font-medium truncate ml-2" title={photo.exif.model}>{photo.exif.make} {photo.exif.model}</span>
+                                    </div>
+                                )}
+                                {photo.exif.lensModel && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">Lens</span>
+                                        <span className="text-gray-800 font-medium truncate ml-2" title={photo.exif.lensModel}>{photo.exif.lensModel}</span>
+                                    </div>
+                                )}
+                                <div className="flex justify-between text-xs text-gray-600 font-mono pt-1">
+                                    <span>{photo.exif.focalLength ? `${photo.exif.focalLength}` : ''}</span>
+                                    <div className="flex gap-2">
+                                        <span>{photo.exif.fNumber ? `${photo.exif.fNumber}` : ''}</span>
+                                        <span>{photo.exif.exposureTime ? `${photo.exif.exposureTime}s` : ''}</span>
+                                        <span>{photo.exif.iso ? `ISO ${photo.exif.iso}` : ''}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
 

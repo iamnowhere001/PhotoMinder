@@ -1,3 +1,4 @@
+
 import React from 'react';
 
 interface SidebarProps {
@@ -30,25 +31,25 @@ const Sidebar: React.FC<SidebarProps> = ({ counts, selectedCount, onSelectCatego
   ];
 
   return (
-    <div className="w-[260px] bg-gray-50/95 backdrop-blur-2xl border-r border-gray-200 h-full flex flex-col pt-6 select-none shadow-[inset_-1px_0_0_0_rgba(0,0,0,0.02)]">
-      <nav className="flex-1 overflow-y-auto px-3 space-y-6">
+    <div className="w-[260px] bg-[#f5f5f7]/95 backdrop-blur-2xl border-r border-gray-200 h-full flex flex-col pt-6 select-none shadow-[inset_-1px_0_0_0_rgba(0,0,0,0.02)]">
+      <nav className="flex-1 overflow-y-auto px-4 space-y-6">
         
         {/* Library Section */}
         <div>
-          <h2 className="px-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2 transition-colors">Library</h2>
-          <ul className="space-y-0.5">
+          <h2 className="px-2 text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2 transition-colors">Library</h2>
+          <ul className="space-y-1">
             {menuItems.map((item) => (
               <li key={item.id}>
                 <button
                   onClick={() => onSelectCategory(item.id)}
-                  className={`w-full flex items-center justify-between px-3 py-1.5 rounded-md text-[13px] font-medium transition-all duration-200 group ${
+                  className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-[13px] font-medium transition-all duration-150 ${
                     activeCategory === item.id
-                      ? 'bg-blue-500 text-white shadow-sm'
+                      ? 'bg-[#007AFF] text-white shadow-sm'
                       : 'text-gray-600 hover:bg-black/5 active:bg-black/10'
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <span className={`opacity-80 ${activeCategory === item.id ? 'text-white' : 'text-gray-500 group-hover:text-gray-700'}`}>
+                    <span className={`${activeCategory === item.id ? 'text-white' : 'text-[#007AFF]'}`}>
                         {item.icon}
                     </span>
                     <span>{item.label}</span>
@@ -57,7 +58,7 @@ const Sidebar: React.FC<SidebarProps> = ({ counts, selectedCount, onSelectCatego
                     <span className={`text-xs ${
                         activeCategory === item.id 
                         ? 'text-white/90' 
-                        : 'text-gray-400 group-hover:text-gray-600'
+                        : 'text-gray-400'
                     }`}>
                       {item.count}
                     </span>
@@ -70,9 +71,9 @@ const Sidebar: React.FC<SidebarProps> = ({ counts, selectedCount, onSelectCatego
 
         {/* Albums Section */}
         <div>
-           <div className="px-3 flex items-center justify-between mb-2 group cursor-pointer">
+           <div className="px-2 flex items-center justify-between mb-2 group cursor-pointer">
               <h2 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider group-hover:text-gray-600 transition-colors">Albums</h2>
-              <button className="text-gray-400 opacity-0 group-hover:opacity-100 hover:text-blue-600 transition-all p-0.5 rounded hover:bg-black/5">
+              <button className="text-gray-400 opacity-0 group-hover:opacity-100 hover:text-[#007AFF] transition-all p-0.5 rounded hover:bg-black/5">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
               </button>
            </div>
@@ -87,17 +88,12 @@ const Sidebar: React.FC<SidebarProps> = ({ counts, selectedCount, onSelectCatego
         </div>
       </nav>
       
-      {/* Footer Info */}
-      <div className="p-4 border-t border-gray-200/60 bg-gray-50/50 backdrop-blur-sm">
+      {/* Footer Info - Mimic Finder Status Bar */}
+      <div className="p-3 border-t border-gray-200/60 bg-[#f5f5f7]/50 backdrop-blur-sm">
         <div className="flex flex-col items-center gap-0.5">
-             <div className="text-[11px] font-semibold text-gray-500">
-                {selectedCount > 0 ? `${selectedCount} Selected` : `${counts.all} Photos`}
+             <div className="text-[11px] font-medium text-gray-500">
+                {selectedCount > 0 ? `${selectedCount} items selected` : `${counts.all} items`}
              </div>
-             {selectedCount === 0 && (
-                 <div className="text-[10px] text-gray-400">
-                    Updated Just Now
-                 </div>
-             )}
         </div>
       </div>
     </div>

@@ -1,6 +1,7 @@
+
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { Photo, SortConfig, ViewMode, RenameOptions, SortKey } from './types';
-import { getImageDimensions, getExifDate } from './utils';
+import { getImageDimensions, getExifData } from './utils';
 import Sidebar from './components/Sidebar';
 import Toolbar from './components/Toolbar';
 import ImageGrid from './components/ImageGrid';
@@ -22,6 +23,7 @@ const App: React.FC = () => {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [activeCategory, setActiveCategory] = useState('all');
   const [quickLookPhoto, setQuickLookPhoto] = useState<Photo | null>(null);
+  const [isDraggingFile, setIsDraggingFile] = useState(false); // Global drag state
   
   // New state for UI Feedback & File System
   const [currentFolder, setCurrentFolder] = useState<string | null>(null);
@@ -171,12 +173,6 @@ const App: React.FC = () => {
         setSelectedIds(new Set([photo.id]));
     }
     
-    // If clicked on blank space, clear selection
-    if (!photo) {
-        // Optional: clear selection if right clicking background
-        // setSelectedIds(new Set());
-    }
-
     setContextMenu({ x: e.clientX, y: e.clientY, photo });
   };
 
@@ -189,7 +185,7 @@ const App: React.FC = () => {
       // Base actions
       if (!targetPhoto && count === 0) {
           return [
-              { label: 'Import...', onClick: () => document.querySelector<HTMLButtonElement>('button[title="Import"]')?.click() }, // Hacky but works for demo
+              { label: 'Import...', onClick: () => document.querySelector<HTMLButtonElement>('button[title="Open a folder"]')?.click() },
               { label: 'Sort by Name', onClick: () => setSortConfig({ key: 'name', direction: 'asc'}) },
               { label: 'Sort by Date', onClick: () => setSortConfig({ key: 'dateModified', direction: 'desc'}) },
           ];
@@ -255,11 +251,27 @@ const App: React.FC = () => {
          if (quickLookPhoto) {
              e.preventDefault();
              handleNextPhoto();
+         } else if (selectedIds.size === 1) {
+             // Grid navigation: Right
+             e.preventDefault();
+             const currentId = Array.from(selectedIds)[0];
+             const idx = sortedPhotos.findIndex(p => p.id === currentId);
+             if (idx !== -1 && idx < sortedPhotos.length - 1) {
+                 setSelectedIds(new Set([sortedPhotos[idx + 1].id]));
+             }
          }
       } else if (e.key === 'ArrowLeft') {
          if (quickLookPhoto) {
              e.preventDefault();
              handlePrevPhoto();
+         } else if (selectedIds.size === 1) {
+             // Grid navigation: Left
+             e.preventDefault();
+             const currentId = Array.from(selectedIds)[0];
+             const idx = sortedPhotos.findIndex(p => p.id === currentId);
+             if (idx > 0) {
+                 setSelectedIds(new Set([sortedPhotos[idx - 1].id]));
+             }
          }
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
           // Check if we are not in an input field
@@ -285,35 +297,31 @@ const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [quickLookPhoto, selectedIds, photos, isRenameModalOpen, isDeleteModalOpen, handleInitiateDelete, handleNextPhoto, handlePrevPhoto]);
+  }, [quickLookPhoto, selectedIds, photos, sortedPhotos, isRenameModalOpen, isDeleteModalOpen, handleInitiateDelete, handleNextPhoto, handlePrevPhoto]);
 
   // Handle loading photos from the fallback input
   const processFiles = async (fileList: File[]) => {
     // Reset Handle
     setDirectoryHandle(null);
     
-    // Extract folder name from webkitRelativePath (standard in folder upload)
+    // Extract folder name from webkitRelativePath if available, else standard
+    let folderName = "Imported Files";
     if (fileList.length > 0) {
         // Use type assertion for non-standard property
         const firstFile = fileList[0] as any;
         if (firstFile.webkitRelativePath) {
             const parts = firstFile.webkitRelativePath.split('/');
             if (parts.length > 1) {
-                setCurrentFolder(parts[0]);
-            } else {
-                setCurrentFolder("Imported Files");
+                folderName = parts[0];
             }
-        } else {
-            setCurrentFolder("Imported Files");
         }
-    } else {
-        setCurrentFolder("Imported Files");
     }
+    setCurrentFolder(folderName);
 
     const imageFiles = fileList.filter(file => file.type.startsWith('image/'));
     
     if (imageFiles.length === 0) {
-        showToast("No image files found in the selected folder.", "error");
+        showToast("No image files found.", "error");
         return;
     }
 
@@ -331,9 +339,8 @@ const App: React.FC = () => {
       };
     }));
 
-    setPhotos(newPhotos);
-    setSelectedIds(new Set());
-    showToast(`Loaded ${newPhotos.length} images (Read-Only Mode)`, 'info');
+    setPhotos(prev => [...prev, ...newPhotos]);
+    showToast(`Added ${newPhotos.length} images`, 'success');
 
     // Lazy load dimensions and EXIF
     newPhotos.forEach(p => {
@@ -341,11 +348,9 @@ const App: React.FC = () => {
         getImageDimensions(p.file).then(dims => {
             setPhotos(prev => prev.map(ph => ph.id === p.id ? { ...ph, dimensions: dims } : ph));
         });
-        // EXIF Date
-        getExifDate(p.file).then(dateTaken => {
-            if (dateTaken) {
-                setPhotos(prev => prev.map(ph => ph.id === p.id ? { ...ph, dateTaken } : ph));
-            }
+        // EXIF Data
+        getExifData(p.file).then(({ dateTaken, exif }) => {
+            setPhotos(prev => prev.map(ph => ph.id === p.id ? { ...ph, dateTaken, exif } : ph));
         });
     });
   };
@@ -355,6 +360,45 @@ const App: React.FC = () => {
       processFiles(Array.from(e.target.files));
     }
   };
+
+  // Drag and Drop Handlers
+  const handleDragOver = (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDraggingFile(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+      e.preventDefault();
+      if (e.currentTarget === e.target) {
+         setIsDraggingFile(false);
+      }
+  };
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDraggingFile(false);
+      
+      const items = e.dataTransfer.items;
+      const files: File[] = [];
+
+      if (items) {
+          for (let i = 0; i < items.length; i++) {
+              if (items[i].kind === 'file') {
+                  const file = items[i].getAsFile();
+                  if (file) files.push(file);
+              }
+          }
+      } else {
+          for (let i = 0; i < e.dataTransfer.files.length; i++) {
+               files.push(e.dataTransfer.files[i]);
+          }
+      }
+      
+      if (files.length > 0) {
+          processFiles(files);
+      }
+  }, []);
+
 
   // Handle Folder Upload using File System Access API
   // Returns true if successful, false if fallback is needed
@@ -379,7 +423,7 @@ const App: React.FC = () => {
       for await (const entry of dirHandle.values()) {
         if (entry.kind === 'file') {
           // Filter by extension manually since we don't have mime type without getting the file
-          if (/\.(jpg|jpeg|png|gif|webp|svg)$/i.test(entry.name)) {
+          if (/\.(jpg|jpeg|png|gif|webp|svg|heic)$/i.test(entry.name)) {
             const file = await entry.getFile();
             const objectUrl = URL.createObjectURL(file);
             
@@ -407,11 +451,9 @@ const App: React.FC = () => {
          getImageDimensions(p.file).then(dims => {
              setPhotos(prev => prev.map(ph => ph.id === p.id ? { ...ph, dimensions: dims } : ph));
          });
-         getExifDate(p.file).then(dateTaken => {
-            if (dateTaken) {
-                setPhotos(prev => prev.map(ph => ph.id === p.id ? { ...ph, dateTaken } : ph));
-            }
-        });
+         getExifData(p.file).then(({ dateTaken, exif }) => {
+             setPhotos(prev => prev.map(ph => ph.id === p.id ? { ...ph, dateTaken, exif } : ph));
+         });
       });
 
       return true;
@@ -598,12 +640,25 @@ const App: React.FC = () => {
 
   return (
     <div 
-      className="flex h-screen w-screen bg-white text-gray-900 overflow-hidden font-sans"
+      className="flex h-screen w-screen bg-white text-gray-900 overflow-hidden font-sans relative"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       onContextMenu={(e) => {
          // Block default right click on the whole app, defer to specific handlers
          e.preventDefault(); 
       }}
     >
+      {/* Drag & Drop Overlay */}
+      {isDraggingFile && (
+          <div className="absolute inset-0 z-[100] bg-blue-500/20 backdrop-blur-sm border-4 border-blue-500 border-dashed m-4 rounded-3xl flex items-center justify-center pointer-events-none animate-fadeIn">
+              <div className="bg-white/90 px-8 py-6 rounded-2xl shadow-2xl flex flex-col items-center">
+                  <svg className="w-16 h-16 text-blue-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                  <p className="text-xl font-bold text-gray-800">Drop photos here to import</p>
+              </div>
+          </div>
+      )}
+
       <Sidebar 
         counts={counts}
         selectedCount={selectedIds.size} 

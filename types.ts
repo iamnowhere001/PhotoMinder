@@ -1,3 +1,14 @@
+
+export interface ExifData {
+  make?: string;
+  model?: string;
+  exposureTime?: string;
+  fNumber?: string;
+  iso?: string;
+  focalLength?: string;
+  lensModel?: string;
+}
+
 export interface Photo {
   id: string;
   file: File;
@@ -8,6 +19,7 @@ export interface Photo {
   type: string;
   lastModified: number; // File Modification Date
   dateTaken?: number;   // EXIF Content Creation Date
+  exif?: ExifData;      // Detailed EXIF metadata
   dimensions?: { width: number; height: number };
   aiDescription?: string;
   aiTags?: string[];

@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useMemo } from 'react';
+
+import React, { useEffect, useRef, useMemo, useState } from 'react';
 import { Photo, ViewMode, SortConfig, SortKey } from '../types';
 import { formatBytes, formatDate, groupPhotosByDate } from '../utils';
 
@@ -15,6 +16,91 @@ interface ImageGridProps {
   onQuickLook: (photo: Photo) => void;
   onContextMenu?: (e: React.MouseEvent, photo?: Photo) => void;
 }
+
+// Separate component for handling image loading state gracefully
+const ImageCard = ({ photo, isSelected, onClick, onDoubleClick, onContextMenu, onToggleFavorite, onToggleSelect }: any) => {
+    const [loaded, setLoaded] = useState(false);
+
+    // Reset loaded state if url changes (rare due to keys)
+    useEffect(() => {
+        setLoaded(false);
+    }, [photo.url]);
+
+    return (
+        <div 
+          onClick={onClick}
+          onDoubleClick={onDoubleClick}
+          onContextMenu={onContextMenu}
+          className={`group flex flex-col items-center gap-2 p-3 rounded-xl transition-all duration-200 cursor-pointer ${
+            isSelected 
+              ? 'bg-[#e4ebf5] shadow-sm ring-2 ring-[#007AFF] ring-offset-2 ring-offset-white' 
+              : 'hover:bg-gray-100 hover:scale-[1.02]'
+          }`}
+        >
+          <div 
+            className="relative aspect-square w-full rounded-lg overflow-hidden bg-gray-100 shadow-sm border border-gray-200/50"
+          >
+            {/* Grid Checkbox Overlay */}
+            <div className={`absolute top-2 left-2 z-10 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity duration-200`}>
+                <input 
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={(e) => {
+                      e.stopPropagation();
+                      onToggleSelect(photo.id, true);
+                  }}
+                  className="w-5 h-5 rounded border-gray-300 text-[#007AFF] focus:ring-[#007AFF] shadow-sm cursor-pointer accent-[#007AFF]"
+                />
+            </div>
+
+            {/* Favorite Button Overlay */}
+            <button
+                onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleFavorite(photo.id);
+                }}
+                className={`absolute top-2 right-2 z-10 p-1.5 rounded-full backdrop-blur-md transition-all duration-200 ${
+                    photo.isFavorite 
+                        ? 'bg-white/80 text-red-500 opacity-100' 
+                        : 'bg-black/20 text-white hover:bg-black/40 opacity-0 group-hover:opacity-100'
+                }`}
+            >
+                <svg className="w-4 h-4" fill={photo.isFavorite ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path></svg>
+            </button>
+
+            {/* Skeleton Loading State */}
+            {!loaded && (
+                <div className="absolute inset-0 bg-gray-200 animate-pulse flex items-center justify-center">
+                    <svg className="w-8 h-8 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                </div>
+            )}
+
+            {/* Image with Fade In */}
+            <img 
+              src={photo.url} 
+              alt={photo.name}
+              className={`w-full h-full object-cover transition-opacity duration-500 ease-out ${loaded ? 'opacity-100' : 'opacity-0'}`}
+              loading="lazy"
+              onLoad={() => setLoaded(true)}
+            />
+            
+            {photo.aiTags && (
+                <div className="absolute bottom-2 right-2">
+                    <span className="flex h-2 w-2 relative">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500"></span>
+                    </span>
+                </div>
+            )}
+          </div>
+          <span className={`text-xs font-medium text-center truncate w-full px-1 rounded ${isSelected ? 'text-[#007AFF]' : 'text-gray-600'}`}>
+            {photo.name}
+          </span>
+        </div>
+    );
+};
 
 const ImageGrid: React.FC<ImageGridProps> = ({ 
   photos, 
@@ -40,7 +126,6 @@ const ImageGrid: React.FC<ImageGridProps> = ({
   }, [someSelected]);
 
   // Determine if we should group by date
-  // macOS groups photos when sorted by date, but usually not when sorted by Name or Size
   const isGroupedView = useMemo(() => {
     return viewMode === 'grid' && (sortConfig.key === 'dateTaken' || sortConfig.key === 'dateModified');
   }, [viewMode, sortConfig]);
@@ -54,89 +139,38 @@ const ImageGrid: React.FC<ImageGridProps> = ({
   const SortIndicator = ({ columnKey }: { columnKey: SortKey }) => {
     const isActive = sortConfig.key === columnKey;
     return (
-      <span className={`ml-1 inline-flex items-center justify-center w-4 h-4 transition-opacity ${isActive ? 'opacity-100 text-blue-600' : 'opacity-0 group-hover:opacity-40'}`}>
+      <span className={`ml-1 inline-flex items-center justify-center w-4 h-4 transition-opacity ${isActive ? 'opacity-100 text-[#007AFF]' : 'opacity-0 group-hover:opacity-40'}`}>
         {isActive && sortConfig.direction === 'desc' ? '↓' : '↑'}
       </span>
     );
   };
 
-  // Render a single photo card
   const renderPhotoCard = (photo: Photo) => {
-    const isSelected = selectedIds.has(photo.id);
-    return (
-        <div 
-          key={photo.id} 
-          onClick={(e) => onToggleSelect(photo.id, e.metaKey || e.ctrlKey)}
-          onDoubleClick={() => onQuickLook(photo)}
-          onContextMenu={(e) => onContextMenu && onContextMenu(e, photo)}
-          className={`group flex flex-col items-center gap-2 p-3 rounded-xl transition-all duration-200 cursor-pointer ${
-            isSelected 
-              ? 'bg-blue-100 shadow-sm ring-2 ring-blue-500 ring-offset-2' 
-              : 'hover:bg-gray-100 hover:scale-[1.02]'
-          }`}
-        >
-          <div 
-            className="relative aspect-square w-full rounded-lg overflow-hidden bg-gray-200 shadow-sm border border-gray-200/50"
-          >
-            {/* Grid Checkbox Overlay */}
-            <div className={`absolute top-2 left-2 z-10 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity duration-200`}>
-                <input 
-                  type="checkbox"
-                  checked={isSelected}
-                  onChange={(e) => {
-                      e.stopPropagation();
-                      onToggleSelect(photo.id, true);
-                  }}
-                  className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 shadow-sm cursor-pointer accent-blue-600"
-                />
-            </div>
-
-            {/* Favorite Button Overlay */}
-            <button
-                onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleFavorite(photo.id);
-                }}
-                className={`absolute top-2 right-2 z-10 p-1.5 rounded-full backdrop-blur-md transition-all duration-200 ${
-                    photo.isFavorite 
-                        ? 'bg-white/80 text-red-500 opacity-100' 
-                        : 'bg-black/20 text-white hover:bg-black/40 opacity-0 group-hover:opacity-100'
-                }`}
-            >
-                <svg className="w-4 h-4" fill={photo.isFavorite ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path></svg>
-            </button>
-
-            <img 
-              src={photo.url} 
-              alt={photo.name}
-              className="w-full h-full object-cover"
-              loading="lazy"
-            />
-            {photo.aiTags && (
-                <div className="absolute bottom-2 right-2">
-                    <span className="flex h-2 w-2 relative">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500"></span>
-                    </span>
-                </div>
-            )}
-          </div>
-          <span className={`text-xs font-medium text-center truncate w-full px-1 rounded ${isSelected ? 'text-blue-700' : 'text-gray-600'}`}>
-            {photo.name}
-          </span>
-        </div>
-    );
+      return (
+        <ImageCard 
+            key={photo.id}
+            photo={photo}
+            isSelected={selectedIds.has(photo.id)}
+            onClick={(e: React.MouseEvent) => onToggleSelect(photo.id, e.metaKey || e.ctrlKey)}
+            onDoubleClick={() => onQuickLook(photo)}
+            onContextMenu={(e: React.MouseEvent) => onContextMenu && onContextMenu(e, photo)}
+            onToggleFavorite={onToggleFavorite}
+            onToggleSelect={onToggleSelect}
+        />
+      );
   };
 
   if (photos.length === 0) {
     return (
       <div 
-        className="flex-1 flex flex-col items-center justify-center text-gray-400 h-full"
+        className="flex-1 flex flex-col items-center justify-center text-gray-400 h-full select-none"
         onContextMenu={(e) => onContextMenu && onContextMenu(e)}
       >
-        <svg className="w-20 h-20 mb-4 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-        <p className="text-lg font-medium">No Photos Loaded</p>
-        <p className="text-sm">Click "Open Folder" to import images.</p>
+        <div className="w-24 h-24 mb-4 rounded-3xl bg-gray-50 flex items-center justify-center shadow-inner">
+            <svg className="w-10 h-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
+        </div>
+        <p className="text-lg font-medium text-gray-500">No Photos</p>
+        <p className="text-sm text-gray-400 mt-1">Drag and drop images here or open a folder.</p>
       </div>
     );
   }
@@ -157,7 +191,7 @@ const ImageGrid: React.FC<ImageGridProps> = ({
                     ref={selectAllRef}
                     checked={allSelected}
                     onChange={onSelectAll}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    className="rounded border-gray-300 text-[#007AFF] focus:ring-[#007AFF] cursor-pointer"
                 />
               </th>
               <th className="px-4 py-2 w-10"></th>
@@ -209,14 +243,14 @@ const ImageGrid: React.FC<ImageGridProps> = ({
                   onClick={(e) => onToggleSelect(photo.id, e.metaKey || e.ctrlKey)}
                   onDoubleClick={() => onQuickLook(photo)}
                   onContextMenu={(e) => onContextMenu && onContextMenu(e, photo)}
-                  className={`hover:bg-blue-50 cursor-pointer transition-colors ${isSelected ? 'bg-blue-100 text-blue-900' : ''}`}
+                  className={`cursor-pointer transition-colors ${isSelected ? 'bg-[#e4ebf5] text-gray-900' : 'hover:bg-gray-50'}`}
                 >
                   <td className="px-4 py-2" onClick={e => e.stopPropagation()}>
                     <input 
                         type="checkbox"
                         checked={isSelected}
                         onChange={() => onToggleSelect(photo.id, true)}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                        className="rounded border-gray-300 text-[#007AFF] focus:ring-[#007AFF] cursor-pointer"
                      />
                   </td>
                   <td className="px-4 py-2" onClick={e => e.stopPropagation()}>
@@ -228,7 +262,7 @@ const ImageGrid: React.FC<ImageGridProps> = ({
                     </button>
                   </td>
                   <td className="px-4 py-2">
-                    <img src={photo.url} alt="" className="w-8 h-8 object-cover rounded shadow-sm" loading="lazy" />
+                    <img src={photo.url} alt="" className="w-8 h-8 object-cover rounded shadow-sm bg-gray-100" loading="lazy" />
                   </td>
                   <td className="px-4 py-2 font-medium truncate max-w-[200px]">{photo.name}</td>
                   <td className="px-4 py-2 text-gray-500">{formatDate(photo.dateTaken || 0)}</td>
@@ -249,10 +283,14 @@ const ImageGrid: React.FC<ImageGridProps> = ({
 
   return (
     <div 
-      className="flex-1 overflow-y-auto p-6" 
+      className="flex-1 overflow-y-auto p-6 scroll-smooth" 
       onContextMenu={(e) => onContextMenu && onContextMenu(e)}
       onClick={(e) => {
-        // Optional: Clicking blank space logic
+        // Clicking background clears selection if not drag
+        if (e.target === e.currentTarget && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+             // Optional: Clear selection
+             // onSelectAll(); // Using toggle logic might be better
+        }
       }}
     >
       <div className="mb-4 flex items-center gap-2 pl-1">
@@ -262,7 +300,7 @@ const ImageGrid: React.FC<ImageGridProps> = ({
             ref={selectAllRef}
             checked={allSelected}
             onChange={onSelectAll}
-            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+            className="rounded border-gray-300 text-[#007AFF] focus:ring-[#007AFF] cursor-pointer"
           />
           <label htmlFor="selectAllGrid" className="text-sm text-gray-500 cursor-pointer select-none">Select All ({photos.length} items)</label>
       </div>

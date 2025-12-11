@@ -1,4 +1,6 @@
 
+import { ExifData } from './types';
+
 export const formatBytes = (bytes: number, decimals = 2) => {
   if (!+bytes) return '0 Bytes';
   const k = 1024;
@@ -42,134 +44,60 @@ export const fileToBase64 = (file: File): Promise<string> => {
   });
 };
 
-// Minimal EXIF parser to get DateTimeOriginal (0x9003) with robust bounds checking
-export const getExifDate = async (file: File): Promise<number | undefined> => {
-  // Only process JPEGs for now
-  if (file.type !== 'image/jpeg' && file.type !== 'image/jpg') return undefined;
-
+// Robust EXIF parser using ExifReader library (Dynamic Import)
+export const getExifData = async (file: File): Promise<{ dateTaken?: number; exif?: ExifData }> => {
+  // Supports JPEG, PNG, HEIC, WEBP, TIFF
   try {
-    const buffer = await file.slice(0, 65536).arrayBuffer(); // Read first 64KB
-    const view = new DataView(buffer);
-    const length = view.byteLength;
+    // Dynamically import ExifReader to avoid top-level load issues
+    // @ts-ignore
+    const ExifReaderModule = await import('exifreader');
+    const ExifReader = ExifReaderModule.default || ExifReaderModule;
 
-    // Check for JPEG SOI marker (0xFFD8)
-    if (length < 2 || view.getUint16(0, false) !== 0xFFD8) return undefined;
+    const tags = await ExifReader.load(file);
+    
+    let dateTaken: number | undefined;
 
-    let offset = 2;
-
-    while (offset < length - 1) { // Need at least 2 bytes for marker
-      const marker = view.getUint16(offset, false);
-      
-      // If SOS (Start of Scan), EXIF is definitely over or we reached image data
-      if (marker === 0xFFDA) return undefined; 
-
-      // 0xFFE1 is APP1 (EXIF)
-      if (marker !== 0xFFE1) {
-        // Validation check for length field at offset + 2
-        if (offset + 4 > length) return undefined; 
-        
-        const segmentLength = view.getUint16(offset + 2, false);
-        // segmentLength includes the 2 bytes of the length field
-        // So next marker is at offset + 2 + segmentLength
-        
-        offset += 2 + segmentLength;
-        continue;
-      }
-
-      // Found APP1 (0xFFE1)
-      if (offset + 4 > length) return undefined;
-      const segmentLength = view.getUint16(offset + 2, false);
-      
-      // Check if segment is fully within buffer
-      if (offset + 2 + segmentLength > length) {
-          // EXIF data truncated, can't parse safely
-          return undefined;
-      }
-
-      // Check for "Exif" header (0x45786966) + 2 null bytes (0x0000)
-      // Header is 6 bytes: Exif\0\0
-      const exifHeaderOffset = offset + 4;
-      if (exifHeaderOffset + 6 > length) return undefined;
-      
-      if (view.getUint32(exifHeaderOffset, false) !== 0x45786966) {
-        return undefined; // Not an Exif segment
-      }
-      if (view.getUint16(exifHeaderOffset + 4, false) !== 0x0000) {
-        return undefined;
-      }
-
-      // TIFF Header follows Exif Header
-      const tiffOffset = exifHeaderOffset + 6;
-      if (tiffOffset + 8 > length) return undefined;
-
-      // Byte order (II: 0x4949 or MM: 0x4D4D)
-      const byteOrder = view.getUint16(tiffOffset, false);
-      const littleEndian = byteOrder === 0x4949;
-      
-      // 0x002A check (42)
-      if (view.getUint16(tiffOffset + 2, littleEndian) !== 0x002A) {
-          return undefined;
-      }
-      
-      const firstIFDOffset = view.getUint32(tiffOffset + 4, littleEndian);
-      if (firstIFDOffset < 0x00000008) return undefined;
-
-      let ifdOffset = tiffOffset + firstIFDOffset;
-      
-      // Validate IFD offset
-      if (ifdOffset + 2 > length) return undefined;
-      
-      const entries = view.getUint16(ifdOffset, littleEndian);
-      
-      // Loop through directory entries
-      for (let i = 0; i < entries; i++) {
-        const entryOffset = ifdOffset + 2 + (i * 12);
-        
-        // Check bounds for entry (12 bytes per entry)
-        if (entryOffset + 12 > length) return undefined;
-
-        const tag = view.getUint16(entryOffset, littleEndian);
-        
-        // 0x9003 is DateTimeOriginal
-        if (tag === 0x9003) {
-           const type = view.getUint16(entryOffset + 2, littleEndian);
-           const count = view.getUint32(entryOffset + 4, littleEndian);
-           
-           // Value/Offset is 4 bytes at entryOffset + 8
-           const dataOffset = view.getUint32(entryOffset + 8, littleEndian);
-           
-           // Type 2 is ASCII string. Count 20 is standard "YYYY:MM:DD HH:MM:SS\0"
-           if (type === 2 && count === 20) { 
-             const dateStringOffset = tiffOffset + dataOffset;
-             
-             // Check bounds for string data
-             if (dateStringOffset + 20 > length) return undefined;
-
-             let dateStr = "";
-             for(let j=0; j<19; j++) {
-                dateStr += String.fromCharCode(view.getUint8(dateStringOffset + j));
-             }
-             
-             // Check if it looks like a date (simplistic check)
-             if (dateStr.includes(':')) {
-                 const isoStr = dateStr.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3').replace(' ', 'T');
-                 const timestamp = new Date(isoStr).getTime();
-                 return isNaN(timestamp) ? undefined : timestamp;
-             }
+    // Try standard DateTimeOriginal
+    const dateOriginal = tags['DateTimeOriginal']?.description;
+    if (dateOriginal) {
+       // Format is typically "YYYY:MM:DD HH:MM:SS"
+       const parts = dateOriginal.split(/[: ]/);
+       if (parts.length >= 6) {
+           const [y, m, d, h, min, s] = parts;
+           const dateObj = new Date(
+               parseInt(y), 
+               parseInt(m) - 1, 
+               parseInt(d), 
+               parseInt(h), 
+               parseInt(min), 
+               parseInt(s)
+           );
+           if (!isNaN(dateObj.getTime())) {
+               dateTaken = dateObj.getTime();
            }
-        }
-      }
-      return undefined; // Tag not found in first IFD
+       }
     }
-    return undefined;
+
+    // Extract useful camera info
+    const exif: ExifData = {
+        make: tags['Make']?.description,
+        model: tags['Model']?.description,
+        exposureTime: tags['ExposureTime']?.description, // e.g. "1/60"
+        fNumber: tags['FNumber']?.description, // e.g. "f/2.8"
+        iso: tags['ISOSpeedRatings']?.description, // e.g. "100"
+        focalLength: tags['FocalLength']?.description, // e.g. "50mm"
+        lensModel: tags['LensModel']?.description,
+    };
+
+    return { dateTaken, exif };
+
   } catch (e) {
-    // Avoid logging object if possible to prevent "[object Object]" logs
-    console.error("Error parsing EXIF", (e as Error).message || e);
-    return undefined;
+    console.warn("EXIF extraction failed:", e);
+    return {};
   }
 };
 
-// --- New Helper for macOS-style Date Grouping ---
+// --- Helper for macOS-style Date Grouping ---
 export const groupPhotosByDate = (photos: any[]) => {
   const groups: Record<string, any[]> = {};
   
