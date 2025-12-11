@@ -6,6 +6,8 @@ import Toolbar from './components/Toolbar';
 import ImageGrid from './components/ImageGrid';
 import DetailsPane from './components/DetailsPane';
 import RenameModal from './components/RenameModal';
+import DeleteConfirmModal from './components/DeleteConfirmModal';
+import QuickLook from './components/QuickLook';
 import Toast from './components/Toast';
 
 const App: React.FC = () => {
@@ -15,6 +17,7 @@ const App: React.FC = () => {
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'name', direction: 'asc' });
   const [scale, setScale] = useState(1);
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [activeCategory, setActiveCategory] = useState('all');
   const [quickLookPhoto, setQuickLookPhoto] = useState<Photo | null>(null);
   
@@ -45,25 +48,25 @@ const App: React.FC = () => {
     return false;
   };
 
-  // Delete Logic
-  const handleDelete = useCallback(async () => {
+  // 1. Initial trigger: Open Modal
+  const handleInitiateDelete = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    setIsDeleteModalOpen(true);
+  }, [selectedIds]);
+
+  // 2. Confirm logic: Execute Delete
+  const handleConfirmDelete = async () => {
+    setIsDeleteModalOpen(false); // Close modal first
+    
     if (selectedIds.size === 0) return;
 
-    // Check if we are in "Real Disk" mode
+    // Check if we are in "Real Disk" mode and check permissions
     if (directoryHandle) {
-        // Since browsers don't support "Move to Recycle Bin", we must warn about Permanent Delete
-        const confirmMessage = `⚠️ WARNING: Permanent Delete\n\nAre you sure you want to permanently delete ${selectedIds.size} item(s) from your disk?\n\nWeb apps cannot move files to the system Trash/Recycle Bin. This action cannot be undone.`;
-        
-        if (!window.confirm(confirmMessage)) return;
-
         const hasPermission = await verifyPermission(directoryHandle, true);
         if (!hasPermission) {
             showToast("Permission denied. Cannot delete files.", "error");
             return;
         }
-    } else {
-        // Browser Import Mode (Memory only)
-        if (!window.confirm(`Remove ${selectedIds.size} item(s) from the application view?`)) return;
     }
 
     let deletedCount = 0;
@@ -99,14 +102,70 @@ const App: React.FC = () => {
     } else {
         showToast(`Successfully deleted ${deletedCount} items.`, 'success');
     }
+  };
 
-  }, [selectedIds, directoryHandle, photos]);
+
+  // Sorting & Filtering Logic
+  const filteredPhotos = useMemo(() => {
+    if (activeCategory === 'favorites') {
+      return photos.filter(p => p.isFavorite);
+    } else if (activeCategory === 'recent') {
+      // Example: photos from the last 30 days
+      const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+      return photos.filter(p => p.lastModified > thirtyDaysAgo);
+    }
+    return photos;
+  }, [photos, activeCategory]);
+
+  const sortedPhotos = useMemo(() => {
+    let sorted = [...filteredPhotos];
+    sorted.sort((a, b) => {
+      let comparison = 0;
+      switch (sortConfig.key) {
+        case 'name':
+          comparison = a.name.localeCompare(b.name, undefined, { numeric: true });
+          break;
+        case 'size':
+          comparison = a.size - b.size;
+          break;
+        case 'dateModified':
+          comparison = a.lastModified - b.lastModified;
+          break;
+        case 'dateTaken':
+          // Sort by date taken (EXIF), fallback to lastModified if not present
+          const timeA = a.dateTaken || a.lastModified;
+          const timeB = b.dateTaken || b.lastModified;
+          comparison = timeA - timeB;
+          break;
+      }
+      return sortConfig.direction === 'asc' ? comparison : -comparison;
+    });
+    return sorted;
+  }, [filteredPhotos, sortConfig]);
+
+  // Quick Look Navigation Helpers
+  const quickLookIndex = useMemo(() => {
+     if (!quickLookPhoto) return -1;
+     return sortedPhotos.findIndex(p => p.id === quickLookPhoto.id);
+  }, [quickLookPhoto, sortedPhotos]);
+
+  const handleNextPhoto = useCallback(() => {
+      if (quickLookIndex !== -1 && quickLookIndex < sortedPhotos.length - 1) {
+          setQuickLookPhoto(sortedPhotos[quickLookIndex + 1]);
+      }
+  }, [quickLookIndex, sortedPhotos]);
+
+  const handlePrevPhoto = useCallback(() => {
+      if (quickLookIndex > 0) {
+          setQuickLookPhoto(sortedPhotos[quickLookIndex - 1]);
+      }
+  }, [quickLookIndex, sortedPhotos]);
 
   // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore key events if modal is open
-      if (isRenameModalOpen) return;
+      if (isRenameModalOpen || isDeleteModalOpen) return;
 
       if (e.code === 'Space') {
         if (quickLookPhoto) {
@@ -122,11 +181,21 @@ const App: React.FC = () => {
       } else if (e.key === 'Escape') {
         if (quickLookPhoto) setQuickLookPhoto(null);
         else if (selectedIds.size > 0) setSelectedIds(new Set());
+      } else if (e.key === 'ArrowRight') {
+         if (quickLookPhoto) {
+             e.preventDefault();
+             handleNextPhoto();
+         }
+      } else if (e.key === 'ArrowLeft') {
+         if (quickLookPhoto) {
+             e.preventDefault();
+             handlePrevPhoto();
+         }
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
           // Check if we are not in an input field
           if (document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
               if (selectedIds.size > 0 && !quickLookPhoto) {
-                  handleDelete();
+                  handleInitiateDelete();
               }
           }
       } else if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
@@ -146,7 +215,7 @@ const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [quickLookPhoto, selectedIds, photos, isRenameModalOpen, handleDelete]);
+  }, [quickLookPhoto, selectedIds, photos, isRenameModalOpen, isDeleteModalOpen, handleInitiateDelete, handleNextPhoto, handlePrevPhoto]);
 
   // Handle loading photos from the fallback input
   const processFiles = async (fileList: File[]) => {
@@ -315,43 +384,6 @@ const App: React.FC = () => {
     });
   };
 
-  const filteredPhotos = useMemo(() => {
-    if (activeCategory === 'favorites') {
-      return photos.filter(p => p.isFavorite);
-    } else if (activeCategory === 'recent') {
-      // Example: photos from the last 30 days
-      const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
-      return photos.filter(p => p.lastModified > thirtyDaysAgo);
-    }
-    return photos;
-  }, [photos, activeCategory]);
-
-  const sortedPhotos = useMemo(() => {
-    let sorted = [...filteredPhotos];
-    sorted.sort((a, b) => {
-      let comparison = 0;
-      switch (sortConfig.key) {
-        case 'name':
-          comparison = a.name.localeCompare(b.name, undefined, { numeric: true });
-          break;
-        case 'size':
-          comparison = a.size - b.size;
-          break;
-        case 'dateModified':
-          comparison = a.lastModified - b.lastModified;
-          break;
-        case 'dateTaken':
-          // Sort by date taken (EXIF), fallback to lastModified if not present
-          const timeA = a.dateTaken || a.lastModified;
-          const timeB = b.dateTaken || b.lastModified;
-          comparison = timeA - timeB;
-          break;
-      }
-      return sortConfig.direction === 'asc' ? comparison : -comparison;
-    });
-    return sorted;
-  }, [filteredPhotos, sortConfig]);
-
   const counts = useMemo(() => {
       const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
       return {
@@ -514,7 +546,7 @@ const App: React.FC = () => {
           sortConfig={sortConfig}
           setSortConfig={setSortConfig}
           onBatchRename={() => setIsRenameModalOpen(true)}
-          onDelete={handleDelete}
+          onDelete={handleInitiateDelete}
           canRename={selectedIds.size > 0}
           canDelete={selectedIds.size > 0}
           scale={scale}
@@ -552,32 +584,24 @@ const App: React.FC = () => {
         count={selectedIds.size}
       />
 
-      {/* Quick Look Modal */}
+      <DeleteConfirmModal
+         isOpen={isDeleteModalOpen}
+         count={selectedIds.size}
+         isDiskOperation={!!directoryHandle}
+         onClose={() => setIsDeleteModalOpen(false)}
+         onConfirm={handleConfirmDelete}
+      />
+
+      {/* Advanced Quick Look Modal */}
       {quickLookPhoto && (
-          <div 
-             className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-8 animate-fadeIn"
-             onClick={() => setQuickLookPhoto(null)}
-          >
-             <div className="relative max-w-full max-h-full flex flex-col items-center" onClick={e => e.stopPropagation()}>
-                 <img 
-                    src={quickLookPhoto.url} 
-                    alt={quickLookPhoto.name}
-                    className="max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain" 
-                 />
-                 <div className="mt-4 px-6 py-2 bg-black/70 backdrop-blur-md rounded-full text-white text-sm font-medium border border-white/10 shadow-lg flex items-center gap-4">
-                     <span className="truncate max-w-xs">{quickLookPhoto.name}</span>
-                     <span className="w-px h-3 bg-white/30"></span>
-                     <span className="text-white/70">{quickLookPhoto.dimensions?.width} × {quickLookPhoto.dimensions?.height}</span>
-                 </div>
-                 
-                 <button 
-                    onClick={() => setQuickLookPhoto(null)}
-                    className="absolute -top-4 -right-4 w-8 h-8 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center text-white backdrop-blur-md transition-colors"
-                 >
-                    ✕
-                 </button>
-             </div>
-          </div>
+          <QuickLook 
+            photo={quickLookPhoto}
+            onClose={() => setQuickLookPhoto(null)}
+            onNext={handleNextPhoto}
+            onPrev={handlePrevPhoto}
+            hasNext={quickLookIndex < sortedPhotos.length - 1}
+            hasPrev={quickLookIndex > 0}
+          />
       )}
 
       {notification && (
