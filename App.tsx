@@ -9,12 +9,14 @@ import RenameModal from './components/RenameModal';
 import DeleteConfirmModal from './components/DeleteConfirmModal';
 import QuickLook from './components/QuickLook';
 import Toast from './components/Toast';
+import ContextMenu from './components/ContextMenu';
 
 const App: React.FC = () => {
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
-  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'name', direction: 'asc' });
+  // Default to dateModified desc so the grouped view is active by default for new users
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'dateModified', direction: 'desc' });
   const [scale, setScale] = useState(1);
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -25,6 +27,9 @@ const App: React.FC = () => {
   const [currentFolder, setCurrentFolder] = useState<string | null>(null);
   const [directoryHandle, setDirectoryHandle] = useState<any | null>(null);
   const [notification, setNotification] = useState<{ message: string, type: 'success' | 'info' | 'error' } | null>(null);
+  
+  // Context Menu State
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; photo?: Photo } | null>(null);
 
   const showToast = (message: string, type: 'success' | 'info' | 'error' = 'info') => {
       setNotification({ message, type });
@@ -109,10 +114,6 @@ const App: React.FC = () => {
   const filteredPhotos = useMemo(() => {
     if (activeCategory === 'favorites') {
       return photos.filter(p => p.isFavorite);
-    } else if (activeCategory === 'recent') {
-      // Example: photos from the last 30 days
-      const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
-      return photos.filter(p => p.lastModified > thirtyDaysAgo);
     }
     return photos;
   }, [photos, activeCategory]);
@@ -160,6 +161,75 @@ const App: React.FC = () => {
           setQuickLookPhoto(sortedPhotos[quickLookIndex - 1]);
       }
   }, [quickLookIndex, sortedPhotos]);
+
+  // Context Menu Handler
+  const handleContextMenu = (e: React.MouseEvent, photo?: Photo) => {
+    e.preventDefault();
+    
+    // If clicked on a photo that isn't selected, select it (and deselect others)
+    if (photo && !selectedIds.has(photo.id)) {
+        setSelectedIds(new Set([photo.id]));
+    }
+    
+    // If clicked on blank space, clear selection
+    if (!photo) {
+        // Optional: clear selection if right clicking background
+        // setSelectedIds(new Set());
+    }
+
+    setContextMenu({ x: e.clientX, y: e.clientY, photo });
+  };
+
+  // Generate Context Menu Actions
+  const contextMenuActions = useMemo(() => {
+      const isMulti = selectedIds.size > 1;
+      const count = selectedIds.size;
+      const targetPhoto = contextMenu?.photo;
+
+      // Base actions
+      if (!targetPhoto && count === 0) {
+          return [
+              { label: 'Import...', onClick: () => document.querySelector<HTMLButtonElement>('button[title="Import"]')?.click() }, // Hacky but works for demo
+              { label: 'Sort by Name', onClick: () => setSortConfig({ key: 'name', direction: 'asc'}) },
+              { label: 'Sort by Date', onClick: () => setSortConfig({ key: 'dateModified', direction: 'desc'}) },
+          ];
+      }
+
+      return [
+          { 
+            label: 'Open', 
+            icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>,
+            onClick: () => targetPhoto && setQuickLookPhoto(targetPhoto),
+            disabled: isMulti 
+          },
+          { separator: true },
+          { 
+            label: isMulti ? `Favorite ${count} Items` : (targetPhoto?.isFavorite ? 'Unfavorite' : 'Favorite'), 
+            icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>,
+            onClick: () => {
+                if (isMulti) {
+                    // Toggle all based on first
+                     setPhotos(prev => prev.map(p => selectedIds.has(p.id) ? { ...p, isFavorite: !p.isFavorite } : p));
+                } else if (targetPhoto) {
+                    handleToggleFavorite(targetPhoto.id);
+                }
+            }
+          },
+          { 
+            label: `Rename ${isMulti ? `${count} Items...` : '...'}`, 
+            icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>,
+            onClick: () => setIsRenameModalOpen(true)
+          },
+          { separator: true },
+          { 
+            label: `Delete ${isMulti ? `${count} Items` : ''}`, 
+            icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>,
+            onClick: handleInitiateDelete,
+            danger: true
+          }
+      ];
+  }, [contextMenu, selectedIds, isRenameModalOpen]);
+
 
   // Keyboard Shortcuts
   useEffect(() => {
@@ -385,10 +455,8 @@ const App: React.FC = () => {
   };
 
   const counts = useMemo(() => {
-      const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
       return {
           all: photos.length,
-          recent: photos.filter(p => p.lastModified > thirtyDaysAgo).length,
           favorites: photos.filter(p => p.isFavorite).length
       };
   }, [photos]);
@@ -529,7 +597,13 @@ const App: React.FC = () => {
   const selectedPhotosList = displayPhotos.filter(p => selectedIds.has(p.id));
 
   return (
-    <div className="flex h-screen w-screen bg-white text-gray-900 overflow-hidden font-sans">
+    <div 
+      className="flex h-screen w-screen bg-white text-gray-900 overflow-hidden font-sans"
+      onContextMenu={(e) => {
+         // Block default right click on the whole app, defer to specific handlers
+         e.preventDefault(); 
+      }}
+    >
       <Sidebar 
         counts={counts}
         selectedCount={selectedIds.size} 
@@ -566,6 +640,7 @@ const App: React.FC = () => {
             onSort={handleSort}
             onToggleFavorite={handleToggleFavorite}
             onQuickLook={setQuickLookPhoto}
+            onContextMenu={handleContextMenu}
           />
           
           <div className="w-80 border-l border-gray-200 flex-shrink-0 bg-gray-50/50">
@@ -601,6 +676,16 @@ const App: React.FC = () => {
             onPrev={handlePrevPhoto}
             hasNext={quickLookIndex < sortedPhotos.length - 1}
             hasPrev={quickLookIndex > 0}
+          />
+      )}
+
+      {/* Context Menu */}
+      {contextMenu && (
+          <ContextMenu 
+              x={contextMenu.x}
+              y={contextMenu.y}
+              onClose={() => setContextMenu(null)}
+              actions={contextMenuActions}
           />
       )}
 
